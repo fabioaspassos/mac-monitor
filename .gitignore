@@ -1,0 +1,11 @@
+# PlatformIO
+firmware/.pio/
+firmware/.vscode/
+
+# macOS
+.DS_Store
+
+# Python (host)
+agent/.venv/
+__pycache__/
+*.pyc
