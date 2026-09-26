@@ -2,6 +2,14 @@
 #include <TFT_eSPI.h>
 
 TFT_eSPI tft = TFT_eSPI();
+TFT_eSprite cardBuf(&tft);   // um sprite só, reaproveitado por todos os cards
+TFT_eSprite sparkBuf(&tft);  // sprite fixo do gráfico de histórico
+
+const int CARD_W = 96, CARD_H = 70;
+const int SPARK_W = 304, SPARK_H = 52;
+const int HISTORY_LEN = 60;
+
+uint16_t COL_BG, COL_CARD, COL_GOOD, COL_WARN, COL_BAD, COL_TEXT, COL_MUTED;
 
 struct Metrics {
   float cpu = 0, mem = 0, swap = 0, disk = 0;
@@ -14,63 +22,136 @@ unsigned long lastMetricsAt = 0;
 bool waitingShown = false;
 String lineBuffer;
 
+int cpuHistory[HISTORY_LEN] = {0};
+int historyIndex = 0, historyCount = 0;
+
+void initPalette() {
+  COL_BG    = tft.color565(10, 12, 16);
+  COL_CARD  = tft.color565(24, 28, 36);
+  COL_GOOD  = tft.color565(70, 200, 120);
+  COL_WARN  = tft.color565(235, 180, 60);
+  COL_BAD   = tft.color565(230, 80, 80);
+  COL_TEXT  = tft.color565(230, 230, 235);
+  COL_MUTED = tft.color565(120, 125, 135);
+}
+
+uint16_t barColor(int pct) {
+  if (pct >= 85) return COL_BAD;
+  if (pct >= 60) return COL_WARN;
+  return COL_GOOD;
+}
+
 String formatRate(long bytesPerSec) {
-  if (bytesPerSec >= 1024 * 1024) return String(bytesPerSec / (1024.0 * 1024.0), 1) + " MB/s";
-  if (bytesPerSec >= 1024) return String(bytesPerSec / 1024.0, 1) + " KB/s";
-  return String(bytesPerSec) + " B/s";
+  if (bytesPerSec >= 1024 * 1024) return String(bytesPerSec / (1024.0 * 1024.0), 1) + "MB/s";
+  if (bytesPerSec >= 1024) return String(bytesPerSec / 1024.0, 1) + "KB/s";
+  return String(bytesPerSec) + "B/s";
+}
+
+void drawStatusBar(bool online) {
+  tft.fillRect(0, 0, 320, 20, COL_BG);
+  tft.fillCircle(10, 10, 4, online ? COL_GOOD : COL_MUTED);
+  tft.setTextColor(COL_MUTED, COL_BG);
+  tft.setTextSize(1);
+  tft.drawString(online ? "recebendo dados" : "aguardando", 20, 6);
+  tft.drawRightString("heap " + String(ESP.getFreeHeap() / 1024) + "KB", 312, 6, 1);
+}
+
+// pct = -1 esconde a barra (usado no card de rede, que não tem um percentual único)
+void drawCard(int x, int y, const char* label, const String& value, int pct) {
+  cardBuf.fillSprite(COL_CARD);
+  cardBuf.setTextDatum(TL_DATUM);
+
+  cardBuf.setTextColor(COL_MUTED, COL_CARD);
+  cardBuf.setTextSize(1);
+  cardBuf.drawString(label, 8, 6);
+
+  cardBuf.setTextColor(COL_TEXT, COL_CARD);
+  cardBuf.setTextSize(2);
+  cardBuf.drawString(value, 8, 22);
+
+  if (pct >= 0) {
+    int barX = 8, barY = CARD_H - 14, barW = CARD_W - 16, barH = 8;
+    cardBuf.drawRoundRect(barX, barY, barW, barH, 3, COL_MUTED);
+    int fillW = (barW - 2) * constrain(pct, 0, 100) / 100;
+    if (fillW > 0) cardBuf.fillRoundRect(barX + 1, barY + 1, fillW, barH - 2, 2, barColor(pct));
+  }
+
+  cardBuf.pushSprite(x, y);
+}
+
+void pushHistory(int value) {
+  cpuHistory[historyIndex] = value;
+  historyIndex = (historyIndex + 1) % HISTORY_LEN;
+  if (historyCount < HISTORY_LEN) historyCount++;
+}
+
+void drawSparkline() {
+  sparkBuf.fillSprite(COL_CARD);
+  sparkBuf.drawRoundRect(0, 0, SPARK_W, SPARK_H, 4, COL_MUTED);
+  sparkBuf.setTextColor(COL_MUTED, COL_CARD);
+  sparkBuf.setTextSize(1);
+  sparkBuf.drawString("CPU (60s)", 6, 4);
+
+  if (historyCount > 1) {
+    int stepX = (SPARK_W - 8) / (HISTORY_LEN - 1);
+    int prevX = -1, prevY = -1;
+    for (int i = 0; i < historyCount; i++) {
+      int idx = (historyIndex - historyCount + i + HISTORY_LEN) % HISTORY_LEN;
+      int px = 4 + i * stepX;
+      int py = SPARK_H - 4 - (cpuHistory[idx] * (SPARK_H - 18) / 100);
+      if (prevX >= 0) sparkBuf.drawLine(prevX, prevY, px, py, COL_GOOD);
+      prevX = px; prevY = py;
+    }
+  }
+  sparkBuf.pushSprite(8, 178);
 }
 
 void drawWaiting() {
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.fillScreen(COL_BG);
+  tft.setTextColor(COL_MUTED, COL_BG);
   tft.setTextSize(2);
   tft.drawString("Aguardando o Mac...", 20, 110);
+  drawStatusBar(false);
   waitingShown = true;
 }
 
-void drawMetrics() {
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextSize(2);
-
-  tft.setTextColor(TFT_WHITE, TFT_BLACK);
-  tft.drawString("Monitor ESP32", 20, 10);
-
-  tft.setTextColor(TFT_CYAN, TFT_BLACK);
-  tft.drawString("CPU:   " + String(metrics.cpu, 0) + "%", 20, 45);
-  tft.drawString("Mem:   " + String(metrics.mem, 0) + "%", 20, 70);
-  tft.drawString("GPU:   " + String(metrics.gpu) + "%", 20, 95);
-  tft.drawString("Disco: " + String(metrics.disk, 0) + "%", 20, 120);
-
-  tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  tft.drawString("Down: " + formatRate(metrics.rx), 20, 155);
-  tft.drawString("Up:   " + formatRate(metrics.tx), 20, 180);
-
+void drawDashboard() {
+  drawStatusBar(true);
+  drawCard(8, 26, "CPU", String((int)metrics.cpu) + "%", (int)metrics.cpu);
+  drawCard(112, 26, "MEM", String((int)metrics.mem) + "%", (int)metrics.mem);
+  drawCard(216, 26, "GPU", String(metrics.gpu) + "%", metrics.gpu);
+  drawCard(8, 102, "REDE", "d " + formatRate(metrics.rx) + "\nu " + formatRate(metrics.tx), -1);
+  drawCard(112, 102, "DISCO", String((int)metrics.disk) + "%", (int)metrics.disk);
+  drawSparkline();
   waitingShown = false;
 }
 
 void applyLine(const String& line) {
-  JsonDocument doc; // ArduinoJson 7: cresce sozinho, sem tamanho fixo
-  if (deserializeJson(doc, line)) return; // linha corrompida, ignora
+  JsonDocument doc;
+  if (deserializeJson(doc, line)) return;
 
   metrics.cpu = doc["cpu"] | 0.0;
   metrics.mem = doc["mem"] | 0.0;
-  metrics.swap = doc["swap"] | 0.0;
-  metrics.press = doc["press"] | 1;
   metrics.gpu = doc["gpu"] | 0;
+  metrics.disk = doc["disk"] | 0.0;
   metrics.rx = doc["rx"] | 0;
   metrics.tx = doc["tx"] | 0;
-  metrics.disk = doc["disk"] | 0.0;
-  metrics.rd = doc["rd"] | 0;
-  metrics.wr = doc["wr"] | 0;
 
+  pushHistory((int)metrics.cpu);
   lastMetricsAt = millis();
-  drawMetrics();
+  if (waitingShown) tft.fillScreen(COL_BG);
+  drawDashboard();
 }
 
 void setup() {
   Serial.begin(115200);
   tft.init();
   tft.setRotation(1);
+  initPalette();
+
+  cardBuf.createSprite(CARD_W, CARD_H);
+  sparkBuf.createSprite(SPARK_W, SPARK_H);
+
   drawWaiting();
 }
 
@@ -82,7 +163,7 @@ void loop() {
       lineBuffer = "";
     } else if (c != '\r') {
       lineBuffer += c;
-      if (lineBuffer.length() > 600) lineBuffer = ""; // linha absurda, descarta
+      if (lineBuffer.length() > 600) lineBuffer = "";
     }
   }
 
