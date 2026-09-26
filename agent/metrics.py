@@ -3,6 +3,19 @@ import subprocess
 import time
 
 import psutil
+from Foundation import NSProcessInfo
+
+# NSProcessInfoThermalState: 0=nominal, 1=fair, 2=serious, 3=critical.
+# É a única leitura térmica que a Apple expõe sem privilégios de root em
+# Apple Silicon - não existe API pública para a temperatura exata em °C.
+_PROCESS_INFO = NSProcessInfo.processInfo()
+
+
+def read_cpu_thermal():
+    try:
+        return int(_PROCESS_INFO.thermalState())
+    except Exception:
+        return 0
 
 
 def read_memory_pressure():
@@ -74,6 +87,7 @@ class Collector:
             "mem": round(vm.percent, 1),
             "swap": round(swap.percent, 1),
             "press": read_memory_pressure(),
+            "temp": read_cpu_thermal(),
             "gpu": read_gpu(),
             "rx": self._net_rx.rate(net.bytes_recv),
             "tx": self._net_tx.rate(net.bytes_sent),

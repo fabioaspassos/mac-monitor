@@ -13,9 +13,14 @@ uint16_t COL_BG, COL_CARD, COL_GOOD, COL_WARN, COL_BAD, COL_TEXT, COL_MUTED;
 
 struct Metrics {
   float cpu = 0, mem = 0, swap = 0, disk = 0;
-  int press = 1, gpu = 0;
+  int press = 1, gpu = 0, temp = 0;
   long rx = 0, tx = 0, rd = 0, wr = 0;
 };
+
+// Apple Silicon não expõe temperatura em °C sem privilégios de root, então o
+// agent manda o NSProcessInfo.thermalState (0=nominal .. 3=critical).
+const char* THERMAL_LABEL[] = {"OK", "MED", "ALTA", "CRIT"};
+const int THERMAL_PCT[] = {15, 45, 75, 100};
 
 Metrics metrics;
 unsigned long lastMetricsAt = 0;
@@ -42,9 +47,9 @@ uint16_t barColor(int pct) {
 }
 
 String formatRate(long bytesPerSec) {
-  if (bytesPerSec >= 1024 * 1024) return String(bytesPerSec / (1024.0 * 1024.0), 1) + "MB/s";
-  if (bytesPerSec >= 1024) return String(bytesPerSec / 1024.0, 1) + "KB/s";
-  return String(bytesPerSec) + "B/s";
+  if (bytesPerSec >= 1024 * 1024) return String(bytesPerSec / (1024.0 * 1024.0), 1) + "mb";
+  if (bytesPerSec >= 1024) return String(bytesPerSec / 1024.0, 1) + "kb";
+  return String(bytesPerSec) + "b";
 }
 
 void drawStatusBar(bool online) {
@@ -75,6 +80,37 @@ void drawCard(int x, int y, const char* label, const String& value, int pct) {
     int fillW = (barW - 2) * constrain(pct, 0, 100) / 100;
     if (fillW > 0) cardBuf.fillRoundRect(barX + 1, barY + 1, fillW, barH - 2, 2, barColor(pct));
   }
+
+  cardBuf.pushSprite(x, y);
+}
+
+// desenha um triangulo indicando sentido do trafego: down=true para download, false para upload
+void drawArrowIcon(int x, int y, bool down, uint16_t color) {
+  const int w = 10, h = 8;
+  if (down) {
+    cardBuf.fillTriangle(x, y, x + w, y, x + w / 2, y + h, color);
+  } else {
+    cardBuf.fillTriangle(x, y + h, x + w, y + h, x + w / 2, y, color);
+  }
+}
+
+void drawNetworkCard(int x, int y, long rx, long tx) {
+  cardBuf.fillSprite(COL_CARD);
+  cardBuf.setTextDatum(TL_DATUM);
+
+  cardBuf.setTextColor(COL_MUTED, COL_CARD);
+  cardBuf.setTextSize(1);
+  cardBuf.drawString("REDE", 8, 6);
+
+  cardBuf.setTextColor(COL_TEXT, COL_CARD);
+  cardBuf.setTextSize(2);
+
+  const int iconX = 8, textX = 24;
+  drawArrowIcon(iconX, 25, true, COL_TEXT);
+  cardBuf.drawString(formatRate(rx), textX, 22);
+
+  drawArrowIcon(iconX, 47, false, COL_TEXT);
+  cardBuf.drawString(formatRate(tx), textX, 44);
 
   cardBuf.pushSprite(x, y);
 }
@@ -118,10 +154,12 @@ void drawWaiting() {
 void drawDashboard() {
   drawStatusBar(true);
   drawCard(8, 26, "CPU", String((int)metrics.cpu) + "%", (int)metrics.cpu);
-  drawCard(112, 26, "MEM", String((int)metrics.mem) + "%", (int)metrics.mem);
-  drawCard(216, 26, "GPU", String(metrics.gpu) + "%", metrics.gpu);
-  drawCard(8, 102, "REDE", "d " + formatRate(metrics.rx) + "\nu " + formatRate(metrics.tx), -1);
+  drawCard(112, 26, "GPU", String(metrics.gpu) + "%", metrics.gpu);
+  drawCard(216, 26, "MEM", String((int)metrics.mem) + "%", (int)metrics.mem);
+  drawNetworkCard(8, 102, metrics.rx, metrics.tx);
   drawCard(112, 102, "DISCO", String((int)metrics.disk) + "%", (int)metrics.disk);
+  int thermalIdx = constrain(metrics.temp, 0, 3);
+  drawCard(216, 102, "TEMP", THERMAL_LABEL[thermalIdx], THERMAL_PCT[thermalIdx]);
   drawSparkline();
   waitingShown = false;
 }
@@ -133,6 +171,7 @@ void applyLine(const String& line) {
   metrics.cpu = doc["cpu"] | 0.0;
   metrics.mem = doc["mem"] | 0.0;
   metrics.gpu = doc["gpu"] | 0;
+  metrics.temp = doc["temp"] | 0;
   metrics.disk = doc["disk"] | 0.0;
   metrics.rx = doc["rx"] | 0;
   metrics.tx = doc["tx"] | 0;
@@ -147,6 +186,7 @@ void setup() {
   Serial.begin(115200);
   tft.init();
   tft.setRotation(1);
+  tft.invertDisplay(true);
   initPalette();
 
   cardBuf.createSprite(CARD_W, CARD_H);
