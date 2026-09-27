@@ -9,3 +9,6 @@ firmware/.vscode/
 agent/.venv/
 __pycache__/
 *.pyc
+
+# Credenciais do firmware
+firmware/secrets.ini
