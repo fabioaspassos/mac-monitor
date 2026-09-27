@@ -72,15 +72,17 @@ Defina como constantes (`constexpr uint32_t`) e converta com `lv_color_hex()`.
 | `text_2` | `#8D97A6` | Rótulos, status, abas inativas |
 | `text_3` | `#737D8C` | Eixos dos gráficos, índices dos núcleos |
 | `text_core` | `#C9D0DA` | Valores acima das barras de núcleo |
-| `cpu` | `#5B9CF6` | CPU: arco, barras de núcleo, linha do histórico |
-| `mem` | `#B08CF5` | Memória |
-| `gpu` | `#F4A259` | GPU |
-| `disk` | `#3CC8B4` | Disco |
-| `net_down` | `#F28DB5` | Download |
-| `net_up` | `#B05584` | Upload |
-| `ok` | `#4ADE80` | "ao vivo", pressão normal, faixa baixa |
-| `warn` | `#F5B83D` | Pressão em alerta, faixa média |
-| `crit` | `#F25C5C` | Valor acima de 85%, pressão crítica |
+| `cpu` | `#0090FF` | CPU: arco, barras de núcleo, linha do histórico |
+| `mem` | `#A040FF` | Memória |
+| `gpu` | `#FF8000` | GPU |
+| `disk` | `#00E0A0` | Disco |
+| `net_down` | `#00E0FF` | Download |
+| `net_up` | `#FF40FF` | Upload |
+| `ok` | `#00E040` | "ao vivo", pressão normal, faixa baixa |
+| `warn` | `#FFD000` | Pressão em alerta, faixa média |
+| `crit` | `#FF2020` | Valor acima de 85%, pressão crítica |
+
+As cores de métrica e de estado (de `cpu` a `crit`) foram saturadas depois das telas de referência, porque os tons pastel originais ficavam lavados no painel do CYD. As PNGs ainda mostram a paleta antiga.
 
 ### 3.2 Fontes
 

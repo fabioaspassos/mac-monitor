@@ -26,15 +26,15 @@ constexpr uint32_t text_active = 0xF1F4F8;
 constexpr uint32_t text_2 = 0x8D97A6;
 constexpr uint32_t text_3 = 0x737D8C;
 constexpr uint32_t text_core = 0xC9D0DA;
-constexpr uint32_t cpu = 0x5B9CF6;
-constexpr uint32_t mem = 0xB08CF5;
-constexpr uint32_t gpu = 0xF4A259;
-constexpr uint32_t disk = 0x3CC8B4;
-constexpr uint32_t net_down = 0xF28DB5;
-constexpr uint32_t net_up = 0xB05584;
-constexpr uint32_t ok = 0x4ADE80;
-constexpr uint32_t warn = 0xF5B83D;
-constexpr uint32_t crit = 0xF25C5C;
+constexpr uint32_t cpu = 0x0090FF;
+constexpr uint32_t mem = 0xA040FF;
+constexpr uint32_t gpu = 0xFF8000;
+constexpr uint32_t disk = 0x00E0A0;
+constexpr uint32_t net_down = 0x00E0FF;
+constexpr uint32_t net_up = 0xFF40FF;
+constexpr uint32_t ok = 0x00E040;
+constexpr uint32_t warn = 0xFFD000;
+constexpr uint32_t crit = 0xFF2020;
 }  // namespace col
 
 // Fontes (seção 3.2), geradas em ui/fonts e declaradas no lv_conf.h
