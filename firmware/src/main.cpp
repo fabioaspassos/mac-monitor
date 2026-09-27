@@ -1,213 +1,99 @@
-#include <ArduinoJson.h>
-#include <TFT_eSPI.h>
+#include <Arduino.h>
+#include <SPI.h>
+#include <XPT2046_Touchscreen.h>
+#include <lvgl.h>
 
-TFT_eSPI tft = TFT_eSPI();
-TFT_eSprite cardBuf(&tft);   // um sprite só, reaproveitado por todos os cards
-TFT_eSprite sparkBuf(&tft);  // sprite fixo do gráfico de histórico
+#include "metrics.h"
+#include "serial_link.h"
+#include "ui/ui.h"
 
-const int CARD_W = 96, CARD_H = 70;
-const int SPARK_W = 304, SPARK_H = 52;
-const int HISTORY_LEN = 60;
+constexpr int SCREEN_W = 320, SCREEN_H = 240;
+constexpr uint32_t OFFLINE_AFTER_MS = 3000;
 
-uint16_t COL_BG, COL_CARD, COL_GOOD, COL_WARN, COL_BAD, COL_TEXT, COL_MUTED;
+// Leituras cruas do XPT2046 nos cantos da tela (calibração típica do CYD).
+// Se o toque sair deslocado, ajuste estes limites.
+constexpr int TOUCH_X_MIN = 200, TOUCH_X_MAX = 3700;
+constexpr int TOUCH_Y_MIN = 240, TOUCH_Y_MAX = 3800;
 
-struct Metrics {
-  float cpu = 0, mem = 0, swap = 0, disk = 0;
-  int press = 1, gpu = 0, temp = 0;
-  long rx = 0, tx = 0, rd = 0, wr = 0;
-};
+// Buffer parcial de 1/10 da tela (~15 KB); uint32_t garante o alinhamento de 4 bytes
+constexpr size_t DRAW_BUF_BYTES = SCREEN_W * SCREEN_H / 10 * sizeof(uint16_t);
+static uint32_t drawBuf[DRAW_BUF_BYTES / sizeof(uint32_t)];
 
-// Apple Silicon não expõe temperatura em °C sem privilégios de root, então o
-// agent manda o NSProcessInfo.thermalState (0=nominal .. 3=critical).
-const char* THERMAL_LABEL[] = {"OK", "MED", "ALTA", "CRIT"};
-const int THERMAL_PCT[] = {15, 45, 75, 100};
+// No CYD o toque fica num barramento SPI separado do da tela
+SPIClass touchSpi(VSPI);
+XPT2046_Touchscreen touch(XPT_CS, XPT_IRQ);
 
 Metrics metrics;
-unsigned long lastMetricsAt = 0;
-bool waitingShown = false;
-String lineBuffer;
+bool online = false;
+uint32_t lastPacketAt = 0;
+uint32_t lastOfflineTick = 0;
 
-int cpuHistory[HISTORY_LEN] = {0};
-int historyIndex = 0, historyCount = 0;
-
-void initPalette() {
-  COL_BG    = tft.color565(10, 12, 16);
-  COL_CARD  = tft.color565(24, 28, 36);
-  COL_GOOD  = tft.color565(70, 200, 120);
-  COL_WARN  = tft.color565(235, 180, 60);
-  COL_BAD   = tft.color565(230, 80, 80);
-  COL_TEXT  = tft.color565(230, 230, 235);
-  COL_MUTED = tft.color565(120, 125, 135);
+uint32_t tickMillis() {
+  return millis();
 }
 
-uint16_t barColor(int pct) {
-  if (pct >= 85) return COL_BAD;
-  if (pct >= 60) return COL_WARN;
-  return COL_GOOD;
-}
-
-String formatRate(long bytesPerSec) {
-  if (bytesPerSec >= 1024 * 1024) return String(bytesPerSec / (1024.0 * 1024.0), 1) + "mb";
-  if (bytesPerSec >= 1024) return String(bytesPerSec / 1024.0, 1) + "kb";
-  return String(bytesPerSec) + "b";
-}
-
-void drawStatusBar(bool online) {
-  tft.fillRect(0, 0, 320, 20, COL_BG);
-  tft.fillCircle(10, 10, 4, online ? COL_GOOD : COL_MUTED);
-  tft.setTextColor(COL_MUTED, COL_BG);
-  tft.setTextSize(1);
-  tft.drawString(online ? "recebendo dados" : "aguardando", 20, 6);
-  tft.drawRightString("heap " + String(ESP.getFreeHeap() / 1024) + "KB", 312, 6, 1);
-}
-
-// pct = -1 esconde a barra (usado no card de rede, que não tem um percentual único)
-void drawCard(int x, int y, const char* label, const String& value, int pct) {
-  cardBuf.fillSprite(COL_CARD);
-  cardBuf.setTextDatum(TL_DATUM);
-
-  cardBuf.setTextColor(COL_MUTED, COL_CARD);
-  cardBuf.setTextSize(1);
-  cardBuf.drawString(label, 8, 6);
-
-  cardBuf.setTextColor(COL_TEXT, COL_CARD);
-  cardBuf.setTextSize(2);
-  cardBuf.drawString(value, 8, 22);
-
-  if (pct >= 0) {
-    int barX = 8, barY = CARD_H - 14, barW = CARD_W - 16, barH = 8;
-    cardBuf.drawRoundRect(barX, barY, barW, barH, 3, COL_MUTED);
-    int fillW = (barW - 2) * constrain(pct, 0, 100) / 100;
-    if (fillW > 0) cardBuf.fillRoundRect(barX + 1, barY + 1, fillW, barH - 2, 2, barColor(pct));
-  }
-
-  cardBuf.pushSprite(x, y);
-}
-
-// desenha um triangulo indicando sentido do trafego: down=true para download, false para upload
-void drawArrowIcon(int x, int y, bool down, uint16_t color) {
-  const int w = 10, h = 8;
-  if (down) {
-    cardBuf.fillTriangle(x, y, x + w, y, x + w / 2, y + h, color);
+void readTouch(lv_indev_t* indev, lv_indev_data_t* data) {
+  if (touch.tirqTouched() && touch.touched()) {
+    TS_Point p = touch.getPoint();
+    // posição em paisagem, como aparece na tela
+    int x = constrain(map(p.x, TOUCH_X_MIN, TOUCH_X_MAX, 0, SCREEN_W - 1), 0, SCREEN_W - 1);
+    int y = constrain(map(p.y, TOUCH_Y_MIN, TOUCH_Y_MAX, 0, SCREEN_H - 1), 0, SCREEN_H - 1);
+    // Com LV_DISPLAY_ROTATION_90 o LVGL espera o ponto na orientação nativa
+    // (retrato) e gira ele mesmo; entregar em paisagem faria girar duas vezes.
+    data->point.x = y;
+    data->point.y = SCREEN_W - 1 - x;
+    data->state = LV_INDEV_STATE_PRESSED;
+#ifdef TOUCH_DEBUG
+    Serial.printf("touch raw=%d,%d z=%d -> %d,%d\n", p.x, p.y, p.z, x, y);
+#endif
   } else {
-    cardBuf.fillTriangle(x, y + h, x + w, y + h, x + w / 2, y, color);
+    data->state = LV_INDEV_STATE_RELEASED;
   }
-}
-
-void drawNetworkCard(int x, int y, long rx, long tx) {
-  cardBuf.fillSprite(COL_CARD);
-  cardBuf.setTextDatum(TL_DATUM);
-
-  cardBuf.setTextColor(COL_MUTED, COL_CARD);
-  cardBuf.setTextSize(1);
-  cardBuf.drawString("REDE", 8, 6);
-
-  cardBuf.setTextColor(COL_TEXT, COL_CARD);
-  cardBuf.setTextSize(2);
-
-  const int iconX = 8, textX = 24;
-  drawArrowIcon(iconX, 25, true, COL_TEXT);
-  cardBuf.drawString(formatRate(rx), textX, 22);
-
-  drawArrowIcon(iconX, 47, false, COL_TEXT);
-  cardBuf.drawString(formatRate(tx), textX, 44);
-
-  cardBuf.pushSprite(x, y);
-}
-
-void pushHistory(int value) {
-  cpuHistory[historyIndex] = value;
-  historyIndex = (historyIndex + 1) % HISTORY_LEN;
-  if (historyCount < HISTORY_LEN) historyCount++;
-}
-
-void drawSparkline() {
-  sparkBuf.fillSprite(COL_CARD);
-  sparkBuf.drawRoundRect(0, 0, SPARK_W, SPARK_H, 4, COL_MUTED);
-  sparkBuf.setTextColor(COL_MUTED, COL_CARD);
-  sparkBuf.setTextSize(1);
-  sparkBuf.drawString("CPU (60s)", 6, 4);
-
-  if (historyCount > 1) {
-    int stepX = (SPARK_W - 8) / (HISTORY_LEN - 1);
-    int prevX = -1, prevY = -1;
-    for (int i = 0; i < historyCount; i++) {
-      int idx = (historyIndex - historyCount + i + HISTORY_LEN) % HISTORY_LEN;
-      int px = 4 + i * stepX;
-      int py = SPARK_H - 4 - (cpuHistory[idx] * (SPARK_H - 18) / 100);
-      if (prevX >= 0) sparkBuf.drawLine(prevX, prevY, px, py, COL_GOOD);
-      prevX = px; prevY = py;
-    }
-  }
-  sparkBuf.pushSprite(8, 178);
-}
-
-void drawWaiting() {
-  tft.fillScreen(COL_BG);
-  tft.setTextColor(COL_MUTED, COL_BG);
-  tft.setTextSize(2);
-  tft.drawString("Aguardando o Mac...", 20, 110);
-  drawStatusBar(false);
-  waitingShown = true;
-}
-
-void drawDashboard() {
-  drawStatusBar(true);
-  drawCard(8, 26, "CPU", String((int)metrics.cpu) + "%", (int)metrics.cpu);
-  drawCard(112, 26, "GPU", String(metrics.gpu) + "%", metrics.gpu);
-  drawCard(216, 26, "MEM", String((int)metrics.mem) + "%", (int)metrics.mem);
-  drawNetworkCard(8, 102, metrics.rx, metrics.tx);
-  drawCard(112, 102, "DISCO", String((int)metrics.disk) + "%", (int)metrics.disk);
-  int thermalIdx = constrain(metrics.temp, 0, 3);
-  drawCard(216, 102, "TEMP", THERMAL_LABEL[thermalIdx], THERMAL_PCT[thermalIdx]);
-  drawSparkline();
-  waitingShown = false;
-}
-
-void applyLine(const String& line) {
-  JsonDocument doc;
-  if (deserializeJson(doc, line)) return;
-
-  metrics.cpu = doc["cpu"] | 0.0;
-  metrics.mem = doc["mem"] | 0.0;
-  metrics.gpu = doc["gpu"] | 0;
-  metrics.temp = doc["temp"] | 0;
-  metrics.disk = doc["disk"] | 0.0;
-  metrics.rx = doc["rx"] | 0;
-  metrics.tx = doc["tx"] | 0;
-
-  pushHistory((int)metrics.cpu);
-  lastMetricsAt = millis();
-  if (waitingShown) tft.fillScreen(COL_BG);
-  drawDashboard();
 }
 
 void setup() {
-  Serial.begin(115200);
-  tft.init();
-  tft.setRotation(1);
-  tft.invertDisplay(true);
-  initPalette();
+  serial_link_begin(115200);
 
-  cardBuf.createSprite(CARD_W, CARD_H);
-  sparkBuf.createSprite(SPARK_W, SPARK_H);
+  touchSpi.begin(XPT_SCLK, XPT_MISO, XPT_MOSI, XPT_CS);
+  touch.begin(touchSpi);
+  touch.setRotation(1);
 
-  drawWaiting();
+  lv_init();
+  lv_tick_set_cb(tickMillis);
+
+  // o driver cria a TFT_eSPI em retrato; a rotação de 90° deixa em paisagem (setRotation(1))
+  lv_display_t* disp = lv_tft_espi_create(TFT_WIDTH, TFT_HEIGHT, drawBuf, DRAW_BUF_BYTES);
+  lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
+
+  lv_indev_t* indev = lv_indev_create();
+  lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+  lv_indev_set_read_cb(indev, readTouch);
+
+  ui_init(disp);
 }
 
 void loop() {
-  while (Serial.available()) {
-    char c = Serial.read();
-    if (c == '\n') {
-      applyLine(lineBuffer);
-      lineBuffer = "";
-    } else if (c != '\r') {
-      lineBuffer += c;
-      if (lineBuffer.length() > 600) lineBuffer = "";
+  lv_timer_handler();
+
+  while (serial_link_poll(metrics)) {
+    ui_update(metrics);
+    lastPacketAt = millis();
+    if (!online) {
+      online = true;
+      ui_set_online(true);
     }
   }
 
-  if (!waitingShown && millis() - lastMetricsAt > 3000) {
-    drawWaiting();
+  uint32_t now = millis();
+  if (online && now - lastPacketAt > OFFLINE_AFTER_MS) {
+    online = false;
+    ui_set_online(false);
+    lastOfflineTick = now;
   }
+  if (!online && now - lastOfflineTick >= 1000) {
+    lastOfflineTick = now;
+    ui_tick_offline();
+  }
+
+  delay(5);
 }
