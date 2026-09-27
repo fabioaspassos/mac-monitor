@@ -3,6 +3,7 @@
 #include <XPT2046_Touchscreen.h>
 #include <lvgl.h>
 
+#include "ble_link.h"
 #include "metrics.h"
 #include "serial_link.h"
 #include "ui/ui.h"
@@ -53,6 +54,7 @@ void readTouch(lv_indev_t* indev, lv_indev_data_t* data) {
 
 void setup() {
   serial_link_begin(115200);
+  ble_link_begin();
 
   touchSpi.begin(XPT_SCLK, XPT_MISO, XPT_MOSI, XPT_CS);
   touch.begin(touchSpi);
@@ -75,7 +77,7 @@ void setup() {
 void loop() {
   lv_timer_handler();
 
-  while (serial_link_poll(metrics)) {
+  while (serial_link_poll(metrics) || ble_link_poll(metrics)) {
     ui_update(metrics);
     lastPacketAt = millis();
     if (!online) {

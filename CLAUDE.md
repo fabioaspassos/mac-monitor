@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-A hardware system monitor for macOS: a Python agent on the Mac reads system metrics and streams them as JSON over USB serial to an ESP32 microcontroller, which renders them on a small TFT display. Two independent halves live side by side:
+A hardware system monitor for macOS: a Python agent on the Mac reads system metrics and streams them as JSON over USB serial (or, optionally, Bluetooth LE) to an ESP32 microcontroller, which renders them on a small TFT display. Two independent halves live side by side:
 
 - `agent/` — Python daemon running on the Mac
 - `firmware/` — PlatformIO/Arduino C++ firmware running on the ESP32
@@ -19,24 +19,26 @@ cd agent
 python3 -m venv .venv          # already present as agent/.venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python agent.py
+python agent.py         # USB serial
+python agent.py --ble   # Bluetooth LE
 ```
 
 There is no test suite or linter configured for the agent.
 
 **Architecture:**
-- `agent.py` — entry point. Finds the ESP32 over USB by matching the CH340 USB-serial chip's VID/PID (`0x1A86, 0x7523`), opens a serial connection at 115200 baud, and every `INTERVAL` (1s) writes one JSON line (`Collector.collect()` + `"\n"`) to the port. Reconnects automatically (polling every 2s) if the board isn't found or the connection drops.
+- `agent.py` — entry point. Opens a transport (`--ble` picks Bluetooth, default USB) and every `INTERVAL` (1s) writes one JSON line (`Collector.collect()` + `"\n"`). On `TransportError` it closes and reopens the same transport.
+- `transport.py` — `SerialTransport` finds the ESP32 by the CH340 USB-serial chip's VID/PID (`0x1A86, 0x7523`) at 115200 baud; `BleTransport` (via `bleak`, own asyncio loop so the agent stays synchronous) scans for the Nordic UART Service UUID / name `"Mac Monitor"` and writes each line to the NUS RX characteristic in chunks of `max_write_without_response_size`. Both retry every 2s until connected. The first `--ble` run triggers macOS's Bluetooth permission prompt for the terminal app.
 - `metrics.py` — `Collector.collect()` gathers all metrics into a single dict, keyed by short field names (`cpu`, `mem`, `swap`, `press`, `temp`, `gpu`, `rx`, `tx`, `disk`, `rd`, `wr`, plus `cores` and a `v` version tag) because they're sent over a slow serial link. Notable details:
   - CPU thermal state comes from `NSProcessInfo.thermalState()` (via PyObjC) — this is the only thermal signal Apple exposes without root on Apple Silicon (0=nominal..3=critical), not an actual °C reading.
   - Memory pressure comes from `sysctl kern.memorystatus_vm_pressure_level`.
   - GPU utilization is parsed by regex from `ioreg -r -d 1 -c IOAccelerator` output (no public API for this).
   - Network/disk throughput are computed as rates via the `RateTracker` helper, which diffs cumulative `psutil` counters against the previous reading.
-- The JSON schema exchanged between agent and firmware is the contract between these two halves — when adding/renaming a field in `metrics.py`, update the corresponding parsing in `firmware/src/serial_link.cpp` (`parseLine()`) and the `Metrics` struct in `firmware/src/metrics.h`.
-- `fake.py` — sends test lines (scenarios `onda`, `normal`, `alta`, `nucleos`) once per second, to exercise the display without real Mac load: `python fake.py alta`. Stop `agent.py` first; only one process can hold the port.
+- The JSON schema exchanged between agent and firmware is the contract between these two halves — when adding/renaming a field in `metrics.py`, update the corresponding parsing in `firmware/src/line_reader.cpp` (`parseLine()`) and the `Metrics` struct in `firmware/src/metrics.h`.
+- `fake.py` — sends test lines (scenarios `onda`, `normal`, `alta`, `nucleos`) once per second, to exercise the display without real Mac load: `python fake.py alta` (add `--ble` for Bluetooth). Stop `agent.py` first; only one process can hold the port / BLE connection.
 
 ## Firmware (`firmware/`)
 
-Standard PlatformIO project targeting `esp32dev` (Arduino framework) on the ESP32-2432S028R ("CYD", no PSRAM). Key config lives in `platformio.ini`: TFT pinout/driver via `build_flags` (ILI9341, 240x320, HSPI, `TFT_INVERSION_ON`), XPT2046 touch pins as `XPT_*` (separate VSPI bus — don't name them `TOUCH_*`, that enables TFT_eSPI's own touch code), and the `huge_app.csv` partition. Library deps: `TFT_eSPI`, `ArduinoJson`, `lvgl@9.2.2`, `XPT2046_Touchscreen`. LVGL is configured in `include/lv_conf.h` (built-in themes off — every widget is styled explicitly; custom fonts declared via `LV_FONT_CUSTOM_DECLARE`).
+Standard PlatformIO project targeting `esp32dev` (Arduino framework) on the ESP32-2432S028R ("CYD", no PSRAM). Key config lives in `platformio.ini`: TFT pinout/driver via `build_flags` (ILI9341, 240x320, HSPI, `TFT_INVERSION_ON`), XPT2046 touch pins as `XPT_*` (separate VSPI bus — don't name them `TOUCH_*`, that enables TFT_eSPI's own touch code), and the `huge_app.csv` partition. Library deps: `TFT_eSPI`, `ArduinoJson`, `lvgl@9.2.2`, `XPT2046_Touchscreen`, `NimBLE-Arduino@^2` (peripheral-only, 1 connection, via `CONFIG_BT_NIMBLE_*` build flags). LVGL is configured in `include/lv_conf.h` (built-in themes off — every widget is styled explicitly; custom fonts declared via `LV_FONT_CUSTOM_DECLARE`).
 
 **Build/upload (requires PlatformIO, e.g. the `pio` CLI or the PlatformIO IDE extension):**
 ```bash
@@ -48,8 +50,10 @@ pio device monitor       # serial monitor (decodes crashes, timestamps — see m
 If upload fails, try lowering `upload_speed` in `platformio.ini` (comment notes 460800 → 115200 as fallback).
 
 **Architecture (`firmware/src/`):**
-- `main.cpp` — LVGL setup (`lv_tft_espi_create` + `LV_DISPLAY_ROTATION_90`, partial draw buffer of 1/10 screen, XPT2046 input device with calibration constants `TOUCH_*_MIN/MAX`) and the update loop from section 7 of the phase 5 doc: `lv_timer_handler()`, `serial_link_poll()` → `ui_update()`, online/offline after 3s, `ui_tick_offline()` once per second while offline.
-- `serial_link.cpp` — non-blocking line reader into a fixed buffer (RX buffer enlarged to 1024 because LVGL can stall the loop), parses JSON protocol v1 into `Metrics` (`metrics.h`, `cores[MAX_CORES=20]` + `coreCount`).
+- `main.cpp` — LVGL setup (`lv_tft_espi_create` + `LV_DISPLAY_ROTATION_90`, partial draw buffer of 1/10 screen, XPT2046 input device with calibration constants `TOUCH_*_MIN/MAX`) and the update loop from section 7 of the phase 5 doc: `lv_timer_handler()`, `serial_link_poll()` / `ble_link_poll()` → `ui_update()`, online/offline after 3s, `ui_tick_offline()` once per second while offline.
+- `line_reader.cpp` — `LineReader::feed(char, Metrics&)`: assembles bytes into a fixed buffer up to `\n` and parses JSON protocol v1 into `Metrics` (`metrics.h`, `cores[MAX_CORES=20]` + `coreCount`). Each source has its own reader so lines never interleave.
+- `serial_link.cpp` — feeds USB serial bytes to a `LineReader` (RX buffer enlarged to 1024 because LVGL can stall the loop).
+- `ble_link.cpp` — NimBLE peripheral advertising the Nordic UART Service (UUIDs must match `agent/transport.py`). `onWrite` runs on the NimBLE task and only pushes bytes into a static FreeRTOS stream buffer; `ble_link_poll()` drains it from `loop()` into its own `LineReader`.
 - `ui/` — LVGL interface: `ui.cpp` (screen, `lv_tabview` with bottom tab bar, "Aguardando o Mac..." overlay on `lv_layer_top()`), `status_bar.cpp`, one `tab_*.cpp` per screen, `chart_panel.cpp` (layout shared by Histórico and Rede), `theme.h/.cpp` (color tokens `col::*`, shared `lv_style_t`s, `value_color()` driven by `UI_COLOR_MODE`, small widget helpers), `format.cpp` (Brazilian number formatting), `fonts/` (Montserrat generated with `lv_font_conv` — bpp 4, range `0x20-0x7E,0xA0-0xFF,0x2212`; regenerate rather than hand-edit).
 - No allocation on the update path beyond LVGL's own: fixed `char` buffers + `snprintf`, and `ui_set_text()` only touches labels whose text changed. Core bars are the one exception: recreated when the core count changes.
 

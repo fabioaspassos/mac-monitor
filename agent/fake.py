@@ -1,10 +1,11 @@
-"""Manda linhas de teste pela serial, uma por segundo, sem depender da carga do Mac.
+"""Manda linhas de teste para a placa (USB ou Bluetooth), uma por segundo, sem depender da carga do Mac.
 
 Uso:
     python fake.py            # cenário normal com variação, para os gráficos terem forma
     python fake.py normal     # linha fixa do protótipo
     python fake.py alta       # linha fixa de carga alta
     python fake.py nucleos    # alterna 4, 10, 14 e 20 núcleos a cada 5 s
+    python fake.py alta --ble # qualquer cenário, via Bluetooth LE
 """
 
 import json
@@ -13,9 +14,7 @@ import random
 import sys
 import time
 
-import serial
-
-from agent import open_connection
+from transport import TransportError, open_transport
 
 NORMAL = {"v": 1, "cpu": 37.5, "cores": [62, 40, 18, 9, 71, 58, 44, 36, 25, 17], "mem": 71.2,
           "swap": 0.8, "press": 1, "gpu": 18, "rx": 125000, "tx": 32000, "disk": 64.1,
@@ -56,18 +55,19 @@ SCENARIOS = {
 
 
 def main():
-    name = sys.argv[1] if len(sys.argv) > 1 else "onda"
+    args = [a for a in sys.argv[1:] if a != "--ble"]
+    name = args[0] if args else "onda"
     scenario = SCENARIOS[name]
-    conn = open_connection()
+    conn = open_transport(ble="--ble" in sys.argv)
     t = 0
     while True:
         line = json.dumps(scenario(t)) + "\n"
         try:
             conn.write(line.encode("utf-8"))
-        except serial.SerialException:
+        except TransportError:
             print("Perdeu a conexão, reconectando...")
             conn.close()
-            conn = open_connection()
+            conn.open()
             continue
         t += 1
         time.sleep(1)
