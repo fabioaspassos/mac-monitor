@@ -3,10 +3,13 @@
 #include <XPT2046_Touchscreen.h>
 #include <lvgl.h>
 
+#include "alert_led.h"
+#include "backlight.h"
 #include "ble_link.h"
 #include "metrics.h"
 #include "ota_link.h"
 #include "serial_link.h"
+#include "settings.h"
 #include "ui/ui.h"
 
 constexpr int SCREEN_W = 320, SCREEN_H = 240;
@@ -29,6 +32,7 @@ Metrics metrics;
 bool online = false;
 uint32_t lastPacketAt = 0;
 uint32_t lastOfflineTick = 0;
+bool swallowTouch = false;  // toque que acendeu a tela: ignorado até soltar
 
 uint32_t tickMillis() {
   return millis();
@@ -36,6 +40,12 @@ uint32_t tickMillis() {
 
 void readTouch(lv_indev_t* indev, lv_indev_data_t* data) {
   if (touch.tirqTouched() && touch.touched()) {
+    // com a tela escurecida o toque só acende, não chega na interface
+    if (backlight_touch()) swallowTouch = true;
+    if (swallowTouch) {
+      data->state = LV_INDEV_STATE_RELEASED;
+      return;
+    }
     TS_Point p = touch.getPoint();
     // posição em paisagem, como aparece na tela
     int x = constrain(map(p.x, TOUCH_X_MIN, TOUCH_X_MAX, 0, SCREEN_W - 1), 0, SCREEN_W - 1);
@@ -49,12 +59,14 @@ void readTouch(lv_indev_t* indev, lv_indev_data_t* data) {
     Serial.printf("touch raw=%d,%d z=%d -> %d,%d\n", p.x, p.y, p.z, x, y);
 #endif
   } else {
+    swallowTouch = false;
     data->state = LV_INDEV_STATE_RELEASED;
   }
 }
 
 void setup() {
   serial_link_begin(115200);
+  settings_begin();
   ble_link_begin();
   ota_link_begin();
 
@@ -75,7 +87,9 @@ void setup() {
   lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(indev, readTouch);
 
-  ui_init(disp);
+  ui_init(disp, settings_tab());
+  backlight_begin(settings_brightness_mode());
+  alert_led_begin();
 
   // Wi-Fi + BLE + LVGL sem PSRAM: acompanhar a folga de RAM
   Serial.printf("Heap livre: %u bytes\n", ESP.getFreeHeap());
@@ -87,6 +101,8 @@ void loop() {
 
   while (serial_link_poll(metrics) || ble_link_poll(metrics)) {
     ui_update(metrics);
+    alert_led_update(metrics);
+    backlight_activity();
     lastPacketAt = millis();
     if (!online) {
       online = true;
@@ -98,12 +114,16 @@ void loop() {
   if (online && now - lastPacketAt > OFFLINE_AFTER_MS) {
     online = false;
     ui_set_online(false);
+    alert_led_off();
     lastOfflineTick = now;
   }
   if (!online && now - lastOfflineTick >= 1000) {
     lastOfflineTick = now;
     ui_tick_offline();
   }
+
+  backlight_poll();
+  settings_poll(ui_active_tab());
 
   delay(5);
 }
