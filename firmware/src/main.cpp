@@ -5,6 +5,7 @@
 
 #include "ble_link.h"
 #include "metrics.h"
+#include "ota_link.h"
 #include "serial_link.h"
 #include "ui/ui.h"
 
@@ -16,9 +17,9 @@ constexpr uint32_t OFFLINE_AFTER_MS = 3000;
 constexpr int TOUCH_X_MIN = 200, TOUCH_X_MAX = 3700;
 constexpr int TOUCH_Y_MIN = 240, TOUCH_Y_MAX = 3800;
 
-// Buffer parcial de 1/10 da tela (~15 KB); uint32_t garante o alinhamento de 4 bytes
+// Buffer parcial de 1/10 da tela (~15 KB). Alocado no heap em setup(): como
+// variável estática estourava a região de RAM estática depois que o Wi-Fi entrou.
 constexpr size_t DRAW_BUF_BYTES = SCREEN_W * SCREEN_H / 10 * sizeof(uint16_t);
-static uint32_t drawBuf[DRAW_BUF_BYTES / sizeof(uint32_t)];
 
 // No CYD o toque fica num barramento SPI separado do da tela
 SPIClass touchSpi(VSPI);
@@ -55,6 +56,7 @@ void readTouch(lv_indev_t* indev, lv_indev_data_t* data) {
 void setup() {
   serial_link_begin(115200);
   ble_link_begin();
+  ota_link_begin();
 
   touchSpi.begin(XPT_SCLK, XPT_MISO, XPT_MOSI, XPT_CS);
   touch.begin(touchSpi);
@@ -64,6 +66,8 @@ void setup() {
   lv_tick_set_cb(tickMillis);
 
   // o driver cria a TFT_eSPI em retrato; a rotação de 90° deixa em paisagem (setRotation(1))
+  // alinhado a 4 bytes e em memória capaz de DMA
+  void* drawBuf = heap_caps_malloc(DRAW_BUF_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_32BIT);
   lv_display_t* disp = lv_tft_espi_create(TFT_WIDTH, TFT_HEIGHT, drawBuf, DRAW_BUF_BYTES);
   lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
 
@@ -72,10 +76,14 @@ void setup() {
   lv_indev_set_read_cb(indev, readTouch);
 
   ui_init(disp);
+
+  // Wi-Fi + BLE + LVGL sem PSRAM: acompanhar a folga de RAM
+  Serial.printf("Heap livre: %u bytes\n", ESP.getFreeHeap());
 }
 
 void loop() {
   lv_timer_handler();
+  ota_link_poll();
 
   while (serial_link_poll(metrics) || ble_link_poll(metrics)) {
     ui_update(metrics);

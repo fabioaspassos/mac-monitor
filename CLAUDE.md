@@ -38,7 +38,7 @@ There is no test suite or linter configured for the agent.
 
 ## Firmware (`firmware/`)
 
-Standard PlatformIO project targeting `esp32dev` (Arduino framework) on the ESP32-2432S028R ("CYD", no PSRAM). Key config lives in `platformio.ini`: TFT pinout/driver via `build_flags` (ILI9341, 240x320, HSPI, `TFT_INVERSION_ON`), XPT2046 touch pins as `XPT_*` (separate VSPI bus — don't name them `TOUCH_*`, that enables TFT_eSPI's own touch code), and the `huge_app.csv` partition. Library deps: `TFT_eSPI`, `ArduinoJson`, `lvgl@9.2.2`, `XPT2046_Touchscreen`, `NimBLE-Arduino@^2` (peripheral-only, 1 connection, via `CONFIG_BT_NIMBLE_*` build flags). LVGL is configured in `include/lv_conf.h` (built-in themes off — every widget is styled explicitly; custom fonts declared via `LV_FONT_CUSTOM_DECLARE`).
+Standard PlatformIO project targeting `esp32dev` (Arduino framework) on the ESP32-2432S028R ("CYD", no PSRAM). Key config lives in `platformio.ini`: TFT pinout/driver via `build_flags` (ILI9341, 240x320, HSPI, `TFT_INVERSION_ON`), XPT2046 touch pins as `XPT_*` (separate VSPI bus — don't name them `TOUCH_*`, that enables TFT_eSPI's own touch code), and the `min_spiffs.csv` partition (two 1.9 MB app slots, needed for OTA). Wi-Fi SSID/password and the OTA password come from `firmware/secrets.ini` (gitignored; copy `secrets.ini.example`) via `extra_configs` and are passed as `WIFI_SSID`/`WIFI_PASS`/`OTA_PASSWORD` build flags. Library deps: `TFT_eSPI`, `ArduinoJson`, `lvgl@9.2.2`, `XPT2046_Touchscreen`, `NimBLE-Arduino@^2` (peripheral-only, 1 connection, via `CONFIG_BT_NIMBLE_*` build flags). LVGL is configured in `include/lv_conf.h` (built-in themes off — every widget is styled explicitly; custom fonts declared via `LV_FONT_CUSTOM_DECLARE`).
 
 **Build/upload (requires PlatformIO, e.g. the `pio` CLI or the PlatformIO IDE extension):**
 ```bash
@@ -46,7 +46,9 @@ cd firmware
 pio run                 # build
 pio run -t upload       # flash to the ESP32
 pio device monitor       # serial monitor (decodes crashes, timestamps — see monitor_filters)
+pio run -e esp32dev_ota -t upload   # flash over Wi-Fi (ArduinoOTA, macmonitor.local)
 ```
+The first flash after the partition-table change must be over USB; after that OTA works.
 If upload fails, try lowering `upload_speed` in `platformio.ini` (comment notes 460800 → 115200 as fallback).
 
 **Architecture (`firmware/src/`):**
@@ -54,6 +56,7 @@ If upload fails, try lowering `upload_speed` in `platformio.ini` (comment notes 
 - `line_reader.cpp` — `LineReader::feed(char, Metrics&)`: assembles bytes into a fixed buffer up to `\n` and parses JSON protocol v1 into `Metrics` (`metrics.h`, `cores[MAX_CORES=20]` + `coreCount`). Each source has its own reader so lines never interleave.
 - `serial_link.cpp` — feeds USB serial bytes to a `LineReader` (RX buffer enlarged to 1024 because LVGL can stall the loop).
 - `ble_link.cpp` — NimBLE peripheral advertising the Nordic UART Service (UUIDs must match `agent/transport.py`). `onWrite` runs on the NimBLE task and only pushes bytes into a static FreeRTOS stream buffer; `ble_link_poll()` drains it from `loop()` into its own `LineReader`.
+- `ota_link.cpp` — non-blocking Wi-Fi STA connect; once connected starts `ArduinoOTA` (hostname `macmonitor`, password-protected). During an upload `ArduinoOTA.handle()` blocks the loop, so the progress callbacks call `ui_ota_progress()` + `lv_timer_handler()` themselves.
 - `ui/` — LVGL interface: `ui.cpp` (screen, `lv_tabview` with bottom tab bar, "Aguardando o Mac..." overlay on `lv_layer_top()`), `status_bar.cpp`, one `tab_*.cpp` per screen, `chart_panel.cpp` (layout shared by Histórico and Rede), `theme.h/.cpp` (color tokens `col::*`, shared `lv_style_t`s, `value_color()` driven by `UI_COLOR_MODE`, small widget helpers), `format.cpp` (Brazilian number formatting), `fonts/` (Montserrat generated with `lv_font_conv` — bpp 4, range `0x20-0x7E,0xA0-0xFF,0x2212`; regenerate rather than hand-edit).
 - No allocation on the update path beyond LVGL's own: fixed `char` buffers + `snprintf`, and `ui_set_text()` only touches labels whose text changed. Core bars are the one exception: recreated when the core count changes.
 

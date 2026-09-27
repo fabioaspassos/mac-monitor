@@ -9,5 +9,10 @@ void ui_update(const Metrics& m);
 void ui_set_online(bool online);
 void ui_tick_offline();  // 1x por segundo enquanto offline
 
+// Painel de atualização OTA por cima de tudo (criado na primeira chamada)
+void ui_ota_progress(int pct);
+void ui_ota_message(const char* text);
+void ui_ota_hide();
+
 // Índice da aba ativa (0=Geral .. 3=Rede); a fase 6 vai persistir esse valor
 uint32_t ui_active_tab();

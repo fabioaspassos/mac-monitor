@@ -1,5 +1,7 @@
 #include "ui.h"
 
+#include <stdio.h>
+
 #include "theme.h"
 #include "ui_internal.h"
 
@@ -11,6 +13,9 @@ constexpr int CONTENT_H = 240 - STATUS_H - TABBAR_H;
 static lv_obj_t* s_tabview;
 static lv_obj_t* s_overlay;
 static uint32_t s_activeTab = 0;
+static lv_obj_t* s_ota;
+static lv_obj_t* s_otaLabel;
+static lv_obj_t* s_otaBar;
 
 static void tabChanged(lv_event_t* e) {
   s_activeTab = lv_tabview_get_tab_active(s_tabview);
@@ -116,6 +121,52 @@ void ui_tick_offline() {
   // abre um vão nas linhas dos gráficos; o resto fica com o último valor
   tab_history_gap();
   tab_network_gap();
+}
+
+// Tela inteira, por cima da barra de status e do overlay "Aguardando o Mac..."
+static void createOtaPanel() {
+  s_ota = lv_obj_create(lv_layer_top());
+  lv_obj_remove_flag(s_ota, LV_OBJ_FLAG_SCROLLABLE);  // clicável: bloqueia o toque na tela
+  lv_obj_set_size(s_ota, SCREEN_W, 240);
+  lv_obj_set_style_bg_color(s_ota, lv_color_hex(col::bg), 0);
+  lv_obj_set_style_bg_opa(s_ota, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(s_ota, 0, 0);
+  lv_obj_set_style_radius(s_ota, 0, 0);
+  lv_obj_set_flex_flow(s_ota, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(s_ota, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_row(s_ota, 12, 0);
+
+  s_otaLabel = ui_label(s_ota, &st_f12_t1, "");
+
+  s_otaBar = lv_bar_create(s_ota);
+  lv_obj_remove_flag(s_otaBar, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(s_otaBar, 200, 8);
+  lv_bar_set_range(s_otaBar, 0, 100);
+  lv_obj_set_style_radius(s_otaBar, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  lv_obj_set_style_radius(s_otaBar, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(s_otaBar, lv_color_hex(col::track), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_otaBar, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(s_otaBar, lv_color_hex(col::cpu), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_opa(s_otaBar, LV_OPA_COVER, LV_PART_INDICATOR);
+}
+
+void ui_ota_progress(int pct) {
+  if (!s_ota) createOtaPanel();
+  lv_obj_remove_flag(s_ota, LV_OBJ_FLAG_HIDDEN);
+  char buf[32];
+  snprintf(buf, sizeof(buf), "Atualizando firmware %d%%", pct);
+  ui_set_text(s_otaLabel, buf);
+  lv_bar_set_value(s_otaBar, pct, LV_ANIM_OFF);
+}
+
+void ui_ota_message(const char* text) {
+  if (!s_ota) createOtaPanel();
+  lv_obj_remove_flag(s_ota, LV_OBJ_FLAG_HIDDEN);
+  ui_set_text(s_otaLabel, text);
+}
+
+void ui_ota_hide() {
+  if (s_ota) lv_obj_add_flag(s_ota, LV_OBJ_FLAG_HIDDEN);
 }
 
 uint32_t ui_active_tab() {
