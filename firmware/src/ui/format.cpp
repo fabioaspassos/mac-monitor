@@ -53,3 +53,57 @@ void fmt_axis_kb(char* buf, size_t size, int32_t kb) {
     snprintf(buf, size, "%ld,%ldM", tenths / 10, tenths % 10);
   }
 }
+
+void fmt_tokens(char* buf, size_t size, long tokens) {
+  if (tokens < 0) tokens = 0;
+  if (tokens < 1000) {
+    snprintf(buf, size, "%ld", tokens);
+    return;
+  }
+  long k = divRound(tokens, 1000);
+  if (k < 1000) {
+    snprintf(buf, size, "%ld k", k);
+    return;
+  }
+  long mbHundredths = divRound(tokens, 10000);
+  if (mbHundredths < 1000) {
+    snprintf(buf, size, "%ld,%02ld M", mbHundredths / 100, mbHundredths % 100);
+    return;
+  }
+  long mbTenths = divRound(tokens, 100000);
+  if (mbTenths < 1000) {
+    snprintf(buf, size, "%ld,%ld M", mbTenths / 10, mbTenths % 10);
+    return;
+  }
+  snprintf(buf, size, "%ld M", divRound(tokens, 1000000));
+}
+
+void fmt_token_rate(char* buf, size_t size, long perMin) {
+  if (perMin < 0) perMin = 0;
+  if (perMin < 1000) {
+    snprintf(buf, size, "%ld/min", perMin);
+    return;
+  }
+  long kTenths = divRound(perMin, 100);
+  if (kTenths < 100) {
+    snprintf(buf, size, "%ld,%ld k/min", kTenths / 10, kTenths % 10);
+    return;
+  }
+  long k = divRound(perMin, 1000);
+  if (k < 1000) {
+    snprintf(buf, size, "%ld k/min", k);
+    return;
+  }
+  long mTenths = divRound(perMin, 100000);
+  snprintf(buf, size, "%ld,%ld M/min", mTenths / 10, mTenths % 10);
+}
+
+void fmt_duration(char* buf, size_t size, long seconds) {
+  if (seconds < 0) seconds = 0;
+  long minutes = seconds / 60;
+  if (minutes < 60) {
+    snprintf(buf, size, "%ld min", minutes);
+    return;
+  }
+  snprintf(buf, size, "%ldh%02ld", minutes / 60, minutes % 60);
+}

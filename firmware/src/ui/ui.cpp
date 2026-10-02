@@ -49,7 +49,7 @@ static void styleTabBar() {
     lv_obj_add_style(btn, &st_tab, 0);
     lv_obj_add_style(btn, &st_tab_pressed, LV_STATE_PRESSED);
     lv_obj_add_style(btn, &st_tab_checked, LV_STATE_CHECKED);
-    // o botão tem ~75x31; a área extra cobre o padding e a célula inteira de 80x40
+    // com 5 abas o botão tem ~59x31; a área extra cobre o padding e a célula inteira de 64x40
     lv_obj_set_ext_click_area(btn, 4);
   }
 }
@@ -93,6 +93,7 @@ void ui_init(lv_display_t* disp, uint32_t initialTab) {
   tab_history_create(addPage("Histórico"));
   tab_cores_create(addPage("Núcleos"));
   tab_network_create(addPage("Rede"));
+  tab_claude_create(addPage("Claude"));
 
   styleTabBar();
   lv_obj_add_event_cb(s_tabview, tabChanged, LV_EVENT_VALUE_CHANGED, nullptr);
@@ -112,6 +113,10 @@ void ui_update(const Metrics& m) {
   tab_history_update(m);
   tab_cores_update(m);
   tab_network_update(m);
+}
+
+void ui_update_claude(const ClaudeUsage& c) {
+  tab_claude_update(c);
 }
 
 void ui_set_online(bool online) {

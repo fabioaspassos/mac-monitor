@@ -54,10 +54,11 @@ void ble_link_begin() {
   adv->start();
 }
 
-bool ble_link_poll(Metrics& m) {
+LineType ble_link_poll(Metrics& m, ClaudeUsage& cu) {
   char c;
   while (xStreamBufferReceive(stream, &c, 1, 0) == 1) {
-    if (reader.feed(c, m)) return true;
+    LineType type = reader.feed(c, m, cu);
+    if (type != LineType::None) return type;
   }
-  return false;
+  return LineType::None;
 }
