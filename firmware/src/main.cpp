@@ -29,6 +29,7 @@ SPIClass touchSpi(VSPI);
 XPT2046_Touchscreen touch(XPT_CS, XPT_IRQ);
 
 Metrics metrics;
+ClaudeUsage claude;
 bool online = false;
 uint32_t lastPacketAt = 0;
 uint32_t lastOfflineTick = 0;
@@ -76,6 +77,10 @@ void setup() {
 
   lv_init();
   lv_tick_set_cb(tickMillis);
+  // segundo pool do LVGL, no heap: com a aba Claude a interface passa perto dos
+  // 48 KB do LV_MEM_SIZE (estático)
+  void* extraPool = heap_caps_malloc(LV_MEM_POOL_EXPAND_SIZE, MALLOC_CAP_8BIT);
+  if (extraPool) lv_mem_add_pool(extraPool, LV_MEM_POOL_EXPAND_SIZE);
 
   // o driver cria a TFT_eSPI em retrato; a rotação de 90° deixa em paisagem (setRotation(1))
   // alinhado a 4 bytes e em memória capaz de DMA
@@ -92,14 +97,24 @@ void setup() {
   alert_led_begin();
 
   // Wi-Fi + BLE + LVGL sem PSRAM: acompanhar a folga de RAM
-  Serial.printf("Heap livre: %u bytes\n", ESP.getFreeHeap());
+  lv_mem_monitor_t mem;
+  lv_mem_monitor(&mem);
+  Serial.printf("Heap livre: %u bytes · LVGL: %u de %u bytes usados\n", ESP.getFreeHeap(),
+                (unsigned)(mem.total_size - mem.free_size), (unsigned)mem.total_size);
 }
 
 void loop() {
   lv_timer_handler();
   ota_link_poll();
 
-  while (serial_link_poll(metrics) || ble_link_poll(metrics)) {
+  LineType type;
+  while ((type = serial_link_poll(metrics, claude)) != LineType::None ||
+         (type = ble_link_poll(metrics, claude)) != LineType::None) {
+    // a linha do Claude Code só atualiza a aba dela; online e brilho seguem as métricas
+    if (type == LineType::Claude) {
+      ui_update_claude(claude);
+      continue;
+    }
     ui_update(metrics);
     alert_led_update(metrics);
     backlight_activity();

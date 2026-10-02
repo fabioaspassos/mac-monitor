@@ -2,6 +2,8 @@ import argparse
 import json
 import time
 
+from claude_usage import ClaudeUsage
+from config import load_config
 from metrics import Collector
 from transport import TransportError, open_transport
 
@@ -16,12 +18,18 @@ def parse_args():
 
 def main():
     args = parse_args()
+    config = load_config()
     collector = Collector()
+    claude = ClaudeUsage(config["claude"]) if config["claude"]["enabled"] else None
     conn = open_transport(args.ble)
 
     while True:
         start = time.monotonic()
         line = json.dumps(collector.collect()) + "\n"
+        # uso do Claude Code: linha separada ("t":"cc"), a cada 10 s
+        cc = claude.poll() if claude else None
+        if cc:
+            line += json.dumps(cc, separators=(",", ":")) + "\n"
 
         try:
             conn.write(line.encode("utf-8"))

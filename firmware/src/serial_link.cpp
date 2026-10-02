@@ -17,9 +17,10 @@ void serial_link_begin(unsigned long baud) {
   Serial.begin(baud);
 }
 
-bool serial_link_poll(Metrics& m) {
+LineType serial_link_poll(Metrics& m, ClaudeUsage& cu) {
   while (Serial.available()) {
-    if (reader.feed(Serial.read(), m)) return true;
+    LineType type = reader.feed(Serial.read(), m, cu);
+    if (type != LineType::None) return type;
   }
-  return false;
+  return LineType::None;
 }

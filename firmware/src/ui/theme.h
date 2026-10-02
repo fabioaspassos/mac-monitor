@@ -35,6 +35,10 @@ constexpr uint32_t net_up = 0xFF40FF;
 constexpr uint32_t ok = 0x00E040;
 constexpr uint32_t warn = 0xFFD000;
 constexpr uint32_t crit = 0xFF2020;
+// Tela Claude (docs/claude)
+constexpr uint32_t claude = 0xE08A6A;      // arco do bloco e barra da hora atual
+constexpr uint32_t claude_dim = 0x764C3F;  // barras das horas que já passaram
+constexpr uint32_t bar_idle = 0x151A22;    // hora passada sem uso (as futuras usam track)
 }  // namespace col
 
 // Fontes (seção 3.2), geradas em ui/fonts e declaradas no lv_conf.h

@@ -23,3 +23,6 @@ void tab_cores_update(const Metrics& m);
 void tab_network_create(lv_obj_t* page);
 void tab_network_update(const Metrics& m);
 void tab_network_gap();
+
+void tab_claude_create(lv_obj_t* page);
+void tab_claude_update(const ClaudeUsage& c);

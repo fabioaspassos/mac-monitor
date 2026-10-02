@@ -6,6 +6,7 @@
 
 void ui_init(lv_display_t* disp, uint32_t initialTab);
 void ui_update(const Metrics& m);
+void ui_update_claude(const ClaudeUsage& c);  // linha "cc", a cada 10 s
 void ui_set_online(bool online);
 void ui_tick_offline();  // 1x por segundo enquanto offline
 
@@ -17,5 +18,5 @@ void ui_ota_hide();
 // Aviso curto no centro da tela, some sozinho depois de 1,5 s
 void ui_toast(const char* text);
 
-// Índice da aba ativa (0=Geral .. 3=Rede), guardado na flash por settings.cpp
+// Índice da aba ativa (0=Geral .. 4=Claude), guardado na flash por settings.cpp
 uint32_t ui_active_tab();

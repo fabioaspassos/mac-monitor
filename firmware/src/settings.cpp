@@ -7,7 +7,7 @@ namespace {
 
 constexpr const char* NAMESPACE = "macmon";
 constexpr uint8_t MODE_COUNT = 4;  // BrightnessMode em backlight.h
-constexpr uint8_t TAB_COUNT = 4;   // Geral, Histórico, Núcleos, Rede
+constexpr uint8_t TAB_COUNT = 5;   // Geral, Histórico, Núcleos, Rede, Claude
 constexpr uint32_t TAB_SAVE_DELAY_MS = 5000;
 
 Preferences prefs;
