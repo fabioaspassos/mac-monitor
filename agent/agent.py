@@ -1,5 +1,6 @@
 import argparse
 import json
+import logging
 import time
 
 from claude_usage import ClaudeUsage
@@ -8,6 +9,8 @@ from metrics import Collector
 from transport import TransportError, open_transport
 
 INTERVAL = 1.0
+
+log = logging.getLogger(__name__)
 
 
 def parse_args():
@@ -18,6 +21,9 @@ def parse_args():
 
 def main():
     args = parse_args()
+    # com hora: sob o launchd a saída vai para ~/Library/Logs/mac-monitor/agent.log
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
+                        datefmt="%Y-%m-%d %H:%M:%S")
     config = load_config()
     collector = Collector()
     claude = ClaudeUsage(config["claude"]) if config["claude"]["enabled"] else None
@@ -34,7 +40,7 @@ def main():
         try:
             conn.write(line.encode("utf-8"))
         except TransportError:
-            print("Perdeu a conexão, reconectando...")
+            log.warning("Perdeu a conexão, reconectando...")
             conn.close()
             conn.open()
             continue

@@ -13,6 +13,7 @@ Uso:
 """
 
 import json
+import logging
 import math
 import random
 import sys
@@ -87,6 +88,7 @@ def main():
     args = [a for a in sys.argv[1:] if a != "--ble"]
     name = args[0] if args else "onda"
     scenario = SCENARIOS[name]
+    logging.basicConfig(level=logging.INFO, format="%(message)s")  # mensagens do transport
     conn = open_transport(ble="--ble" in sys.argv)
     t = 0
     while True:

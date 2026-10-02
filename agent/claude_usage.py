@@ -14,6 +14,7 @@ e monta a linha {"t": "cc", ...} que vai para o ESP32 a cada send_interval_s
 import calendar
 import glob
 import json
+import logging
 import os
 import time
 
@@ -24,6 +25,8 @@ DAY_S = 24 * 3600
 # Se o relógio de parede andar bem mais que o monotônico entre duas leituras,
 # o Mac dormiu: tudo é recalculado a partir dos arquivos.
 SLEEP_JUMP_S = 60
+
+log = logging.getLogger(__name__)
 
 
 def _parse_ts(ts):
@@ -101,7 +104,7 @@ class ClaudeUsage:
         except Exception as e:
             # um formato inesperado não pode derrubar o agente; avisa uma vez só
             if str(e) != self._last_error:
-                print(f"Claude Code: erro ao ler o uso ({e})")
+                log.warning("Claude Code: erro ao ler o uso (%s)", e)
                 self._last_error = str(e)
             return None
 
