@@ -5,9 +5,12 @@ ou com o pacote tomli nas versões anteriores.
 """
 
 import copy
+import logging
 import os
 
 CONFIG_PATH = os.path.expanduser("~/.config/mac-monitor/config.toml")
+
+log = logging.getLogger(__name__)
 
 DEFAULTS = {
     "claude": {
@@ -34,7 +37,7 @@ def _load_toml(path):
         try:
             import tomli as tomllib
         except ImportError:
-            print(f"Aviso: {path} ignorado (instale tomli ou use Python 3.11+)")
+            log.warning("%s ignorado (instale tomli ou use Python 3.11+)", path)
             return {}
     with open(path, "rb") as f:
         return tomllib.load(f)
@@ -47,7 +50,7 @@ def load_config(path=CONFIG_PATH):
     try:
         data = _load_toml(path)
     except Exception as e:
-        print(f"Aviso: erro ao ler {path} ({e}), usando os padrões")
+        log.warning("erro ao ler %s (%s), usando os padrões", path, e)
         return config
     for section, values in data.items():
         if isinstance(values, dict) and isinstance(config.get(section), dict):

@@ -14,6 +14,7 @@ Roda numa thread própria para a requisição HTTP não travar o laço de 1 s.
 
 import datetime
 import json
+import logging
 import subprocess
 import threading
 import time
@@ -23,6 +24,8 @@ import urllib.request
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 KEYCHAIN_SERVICE = "Claude Code-credentials"
 TIMEOUT_S = 10
+
+log = logging.getLogger(__name__)
 
 
 class OAuthUsageError(Exception):
@@ -111,11 +114,11 @@ class OAuthUsage:
                 with self._lock:
                     self._result, self._fetched_at = result, time.time()
                 if self._last_error is not None:
-                    print("Claude Code: uso via API restabelecido")
+                    log.info("Claude Code: uso via API restabelecido")
                 self._last_error = None
             except OAuthUsageError as e:
                 # avisa só quando o motivo muda, para não encher o log
                 if str(e) != self._last_error:
-                    print(f"Claude Code: uso via API indisponível ({e}), usando o status line")
+                    log.warning("Claude Code: uso via API indisponível (%s), usando o status line", e)
                     self._last_error = str(e)
             time.sleep(self._interval)

@@ -5,6 +5,7 @@ de novo a cada 2 s), `write()` levanta `TransportError` se a conexão cair.
 """
 
 import asyncio
+import logging
 import time
 
 import serial
@@ -20,6 +21,8 @@ NUS_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 BLE_SCAN_TIMEOUT = 5.0
 
 RETRY_DELAY = 2
+
+log = logging.getLogger(__name__)
 
 
 class TransportError(Exception):
@@ -38,17 +41,21 @@ class SerialTransport:
         return None
 
     def open(self):
+        warned = False
         while True:
             device = self.find_port()
             if device:
                 try:
                     self.conn = serial.Serial(device, BAUD_RATE, timeout=1)
                     time.sleep(2)  # dá tempo do ESP32 reiniciar após abrir a porta
-                    print(f"Conectado em {device}")
+                    log.info("Conectado em %s", device)
                     return
                 except serial.SerialException:
                     pass
-            print(f"Placa não encontrada, tentando de novo em {RETRY_DELAY}s...")
+            # avisa só na primeira tentativa, para não encher o log
+            if not warned:
+                log.info("Placa não encontrada, tentando de novo a cada %ss...", RETRY_DELAY)
+                warned = True
             time.sleep(RETRY_DELAY)
 
     def write(self, data):
@@ -92,19 +99,22 @@ class BleTransport:
             await client.disconnect()
             return False
         self.connected = True
-        print(f"Conectado em {device.name or device.address} (Bluetooth)")
+        log.info("Conectado em %s (Bluetooth)", device.name or device.address)
         return True
 
     def open(self):
         from bleak.exc import BleakError
 
+        warned = False
         while True:
             try:
                 if self.loop.run_until_complete(self._connect()):
                     return
             except (BleakError, asyncio.TimeoutError, OSError):
                 self.close()
-            print(f"Placa não encontrada, tentando de novo em {RETRY_DELAY}s...")
+            if not warned:
+                log.info("Placa não encontrada, tentando de novo a cada %ss...", RETRY_DELAY)
+                warned = True
             time.sleep(RETRY_DELAY)
 
     async def _write(self, data):

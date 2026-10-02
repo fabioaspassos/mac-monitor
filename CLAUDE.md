@@ -23,6 +23,16 @@ python agent.py         # USB serial
 python agent.py --ble   # Bluetooth LE
 ```
 
+**Running as a service (LaunchAgent, starts at login, relaunched if it dies):**
+```bash
+agent/launchd/install.sh --ble    # args go to agent.py; rerun to reinstall / switch USB↔BLE
+launchctl kickstart -k gui/$(id -u)/local.mac-monitor.agent   # restart after code changes
+launchctl bootout gui/$(id -u)/local.mac-monitor.agent        # stop (needed before fake.py / manual runs; KeepAlive brings it back otherwise)
+agent/launchd/uninstall.sh
+tail -f ~/Library/Logs/mac-monitor/agent.log
+```
+`install.sh` writes `~/Library/LaunchAgents/local.mac-monitor.agent.plist` (absolute paths, `RunAtLoad` + `KeepAlive`, stdout/stderr → `~/Library/Logs/mac-monitor/agent.log`, `python -u` so the log isn't buffered) and builds `~/Library/Application Support/mac-monitor/MacMonitorAgent.app`: a tiny ad-hoc-signed bundle whose executable (`launchd/launcher.c`) just `execv`s the venv Python. It exists for Bluetooth — under launchd the TCC "responsible process" is the first binary spawned, and Apple's `python3` is a platform binary that TCC denies without prompting; the bundle's Info.plist carries `NSBluetoothAlwaysUsageDescription`, so the permission goes to "Mac Monitor Agent". It's only rebuilt when `launcher.c` changes (a new signature re-triggers the prompt). The agent logs via `logging` with timestamps.
+
 There is no test suite or linter configured for the agent.
 
 **Architecture:**
@@ -31,7 +41,7 @@ There is no test suite or linter configured for the agent.
 - `claude_usage.py` — data for the Claude tab (spec: `docs/claude/claude-code-dados-agente.md`). Every 5 s it tails the Claude Code transcripts (`~/.claude/projects/**/*.jsonl`, or `$CLAUDE_CONFIG_DIR/projects`) keeping per-minute token buckets for 24 h (deduped by `message.id:requestId`), reads the status-line cache files and the `claude_oauth` result (precedence: API → status line → estimated), and builds the `cc` message (sent every 10 s or when `b5.pct` changes). Tokens = input + output + cache creation; cache reads go separately in `tc`. Without `rate_limits` it falls back to the ccusage-style estimated 5 h block (`src:"est"`). A wall-clock jump vs. monotonic time (Mac slept) resets everything and rereads the files.
 - `claude_oauth.py` — first source for the 5 h / 7 day percentages: the undocumented `GET https://api.anthropic.com/api/oauth/usage` (what `/usage` calls; `utilization` is 0–100, `resets_at` ISO 8601), polled every `oauth_interval_s` (120 s) in a daemon thread. The OAuth token is read from the Keychain item `Claude Code-credentials` per request and dropped; never refreshed here (would invalidate Claude Code's token), never logged or sent to the ESP32. Expired token / HTTP error → falls back to the status line. Off with `oauth_usage = false`.
 - `claude_statusline.py` — Claude Code status-line command (configured in `~/.claude/settings.json`) that saves `rate_limits`/session/model to `~/Library/Caches/mac-monitor/claude/<session_id>.json` (temp file + rename) — the only official source for the 5 h block % and reset time. Stdlib only, never fails; `-- <cmd>` chains a previous status line.
-- `transport.py` — `SerialTransport` finds the ESP32 by the CH340 USB-serial chip's VID/PID (`0x1A86, 0x7523`) at 115200 baud; `BleTransport` (via `bleak`, own asyncio loop so the agent stays synchronous) scans for the Nordic UART Service UUID / name `"Mac Monitor"` and writes each line to the NUS RX characteristic in chunks of `max_write_without_response_size`. Both retry every 2s until connected. The first `--ble` run triggers macOS's Bluetooth permission prompt for the terminal app.
+- `transport.py` — `SerialTransport` finds the ESP32 by the CH340 USB-serial chip's VID/PID (`0x1A86, 0x7523`) at 115200 baud; `BleTransport` (via `bleak`, own asyncio loop so the agent stays synchronous) scans for the Nordic UART Service UUID / name `"Mac Monitor"` and writes each line to the NUS RX characteristic in chunks of `max_write_without_response_size`. Both retry every 2s until connected, logging "Placa não encontrada" only on the first attempt of each `open()`. From a terminal, the first `--ble` run triggers macOS's Bluetooth permission prompt for the terminal app; as a service, for `MacMonitorAgent.app`.
 - `metrics.py` — `Collector.collect()` gathers all metrics into a single dict, keyed by short field names (`cpu`, `mem`, `swap`, `press`, `temp`, `gpu`, `rx`, `tx`, `disk`, `rd`, `wr`, plus `cores` and a `v` version tag) because they're sent over a slow serial link. Notable details:
   - CPU thermal state comes from `NSProcessInfo.thermalState()` (via PyObjC) — this is the only thermal signal Apple exposes without root on Apple Silicon (0=nominal..3=critical), not an actual °C reading.
   - Memory pressure comes from `sysctl kern.memorystatus_vm_pressure_level`.
