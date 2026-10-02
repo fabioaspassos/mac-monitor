@@ -1,7 +1,10 @@
 #include <stdio.h>
 
+#include "../backlight.h"
+#include "../settings.h"
 #include "format.h"
 #include "theme.h"
+#include "ui.h"
 #include "ui_internal.h"
 
 static lv_obj_t* s_liveDot;
@@ -14,8 +17,18 @@ static void dotOpaAnim(void* dot, int32_t opa) {
   lv_obj_set_style_bg_opa((lv_obj_t*)dot, (lv_opa_t)opa, 0);
 }
 
+// Toque na barra de status troca o modo de brilho
+static void barClicked(lv_event_t* e) {
+  settings_set_brightness_mode(backlight_cycle_mode());
+  char buf[24];
+  snprintf(buf, sizeof(buf), "Brilho: %s", backlight_mode_name());
+  ui_toast(buf);
+}
+
 void status_bar_create(lv_obj_t* parent) {
   lv_obj_t* bar = ui_box(parent);
+  lv_obj_add_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(bar, barClicked, LV_EVENT_CLICKED, nullptr);
   lv_obj_set_pos(bar, 0, 0);
   lv_obj_set_size(bar, 320, 22);
   lv_obj_set_style_bg_color(bar, lv_color_hex(col::bg), 0);

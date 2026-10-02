@@ -16,6 +16,8 @@ static uint32_t s_activeTab = 0;
 static lv_obj_t* s_ota;
 static lv_obj_t* s_otaLabel;
 static lv_obj_t* s_otaBar;
+static lv_obj_t* s_toast;
+static lv_timer_t* s_toastTimer;
 
 static void tabChanged(lv_event_t* e) {
   s_activeTab = lv_tabview_get_tab_active(s_tabview);
@@ -69,7 +71,7 @@ static void createOverlay() {
   lv_obj_center(label);
 }
 
-void ui_init(lv_display_t* disp) {
+void ui_init(lv_display_t* disp, uint32_t initialTab) {
   theme_init();
 
   lv_obj_t* scr = lv_display_get_screen_active(disp);
@@ -94,6 +96,10 @@ void ui_init(lv_display_t* disp) {
 
   styleTabBar();
   lv_obj_add_event_cb(s_tabview, tabChanged, LV_EVENT_VALUE_CHANGED, nullptr);
+  if (initialTab < lv_tabview_get_tab_count(s_tabview)) {
+    lv_tabview_set_active(s_tabview, initialTab, LV_ANIM_OFF);
+    s_activeTab = initialTab;
+  }
 
   createOverlay();
   ui_set_online(false);
@@ -167,6 +173,32 @@ void ui_ota_message(const char* text) {
 
 void ui_ota_hide() {
   if (s_ota) lv_obj_add_flag(s_ota, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void hideToast(lv_timer_t* t) {
+  lv_obj_add_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
+}
+
+void ui_toast(const char* text) {
+  if (!s_toast) {
+    s_toast = lv_label_create(lv_layer_top());
+    lv_obj_add_style(s_toast, &st_f12_t1, 0);
+    lv_obj_set_style_bg_color(s_toast, lv_color_hex(col::tab_active_bg), 0);
+    lv_obj_set_style_bg_opa(s_toast, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_toast, 6, 0);
+    lv_obj_set_style_pad_hor(s_toast, 12, 0);
+    lv_obj_set_style_pad_ver(s_toast, 8, 0);
+    lv_obj_center(s_toast);
+    s_toastTimer = lv_timer_create(hideToast, 1500, nullptr);
+    lv_timer_set_auto_delete(s_toastTimer, false);
+  }
+  lv_label_set_text(s_toast, text);
+  lv_obj_remove_flag(s_toast, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(s_toast);
+  // um disparo só, reiniciado a cada chamada
+  lv_timer_set_repeat_count(s_toastTimer, 1);
+  lv_timer_reset(s_toastTimer);
+  lv_timer_resume(s_toastTimer);
 }
 
 uint32_t ui_active_tab() {
